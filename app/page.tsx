@@ -1,75 +1,211 @@
 "use client";
-import { InputAddressType } from "@/src/components/GoogleMap";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import PickupAddressMap from "@/src/components/GoogleMap";
+import { Skeleton } from "@/src/components/ui/Skeleton";
+import { Slider } from "@/src/components/ui/Slider";
+import { cn } from "@/src/lib/utils";
+import {
+  GoogleMap,
+  MarkerF,
+  CircleF,
+  Libraries,
+  useJsApiLoader
+} from "@react-google-maps/api";
+import type { NextPage } from "next";
+import { useEffect, useMemo, useRef, useState } from "react";
+import usePlacesAutocomplete, {
+  getGeocode,
+  getLatLng
+} from "use-places-autocomplete";
 
-export default function Sos() {
-  return (
-    <div className="relative z-30 flex w-full flex-col items-center justify-center p-4 font-dmsans ">
-      <div className="flex h-fit w-full flex-col items-center justify-center">
-        <FormComponent />
-      </div>
-    </div>
+const Home: NextPage = () => {
+  const [lat, setLat] = useState(27.672932021393862);
+  const [lng, setLng] = useState(85.31184012689732);
+  const [pgs, setPgs] = useState<any[]>([]);
+
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const placesServiceRef = useRef<google.maps.places.PlacesService | null>(
+    null
   );
-}
+  const [radius, setRadius] = useState<number>(1000);
 
-function FormComponent() {
-  const [mapError, setMapError] = useState<string>();
-  const [pickupAddress, setPickupAddress] = useState<InputAddressType>({
-    lat: 0,
-    lng: 0,
-    name: "",
-    city: "",
-    state: "",
-    pincode: ""
+  const libraries: Libraries = useMemo(() => ["places"], []);
+  const mapCenter = useMemo(() => ({ lat: lat, lng: lng }), [lat, lng]);
+
+  const mapOptions = useMemo<google.maps.MapOptions>(
+    () => ({
+      disableDefaultUI: false,
+      clickableIcons: true,
+      scrollwheel: false
+    }),
+    []
+  );
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script",
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY as string,
+    libraries: ["places"]
   });
 
-  const searchParams = useSearchParams();
-
   useEffect(() => {
-    const lat = parseFloat(searchParams.get("lat") || "0");
-    const lng = parseFloat(searchParams.get("lng") || "0");
+    if (isLoaded && mapRef.current) {
+      const map = mapRef.current;
+      const service = new google.maps.places.PlacesService(map);
+      placesServiceRef.current = service; // Store the PlacesService reference
 
-    setPickupAddress({
-      lat,
-      lng,
-      name: "",
-      city: "",
-      state: "",
-      pincode: ""
-    });
-  }, [searchParams]);
+      // Fetch nearby PGs
+      service.nearbySearch(
+        {
+          location: mapCenter,
+          radius: radius, // Search within a radius of 2.5km
+          type: "PG"
+        },
+        (results, status) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK) {
+            setPgs(results || []); // Handle null result
+          }
+        }
+      );
+    }
+  }, [isLoaded, mapCenter]);
 
   return (
-    <div className="flex w-full flex-col gap-6 font-dmsans">
-      <div className="flex w-full flex-col justify-start gap-1">
-        <PickupAddressMap
-          pickupAddress={pickupAddress}
-          setPickupAddress={setPickupAddress}
-          setMapError={setMapError}
+    <div className="flex flex-col w-full justify-center gap-10 items-center">
+      <div className="flex justify-center w-full items-center">
+        <PlacesAutocomplete
+          onAddressSelect={(address) => {
+            getGeocode({ address: address }).then((results) => {
+              const { lat, lng } = getLatLng(results[0]);
+              setLat(lat);
+              setLng(lng);
+            });
+          }}
         />
-        {mapError && (
-          <p className="error-message font-dmsans text-sm">{mapError}</p>
-        )}
       </div>
-      <hr className="border-t-1 border-gray-400"></hr>
-      <div
-        style={{
-          boxShadow: "2px -2px 4px 0px #0000001A"
-        }}
-        className="fixed bottom-0 z-10 -ml-4 flex w-full items-center justify-center rounded-t-2xl bg-white p-4"
-      >
-        <button
-          name="_action"
-          value={"sos"}
-          // onClick={onSubmit}
-          // disabled={navigation.state !== "idle"}
-          className="flex w-full items-center justify-center rounded-full bg-red-700 py-3 font-dmsans text-base font-bold text-white"
+      <div className="border-black border-1 flex ">
+        <Slider
+          defaultValue={[50]}
+          max={100}
+          step={1}
+          className={cn("w-[60%]")}
+          onChange={(value) => console.log(value)}
+        />
+      </div>
+      {isLoaded ? (
+        <GoogleMap
+          options={mapOptions}
+          zoom={14}
+          center={mapCenter}
+          mapTypeId={google.maps.MapTypeId.ROADMAP}
+          mapContainerStyle={{ width: "600px", height: "600px" }}
+          onLoad={(map) => {
+            console.log("Map Loaded");
+            mapRef.current = map;
+          }}
         >
-          SUBMIT
-        </button>
-      </div>
+          {pgs.map((pg, idx) => (
+            <MarkerF
+              key={idx}
+              position={{
+                lat: pg.geometry.location.lat(),
+                lng: pg.geometry.location.lng()
+              }}
+              onLoad={() => console.log("Hospital Marker Loaded")}
+            />
+          ))}
+          <CircleF
+            key={radius}
+            center={mapCenter}
+            radius={radius}
+            onLoad={() => console.log("Circle Load...")}
+            options={{
+              fillColor: radius > 1000 ? "red" : "green",
+              strokeColor: radius > 1000 ? "red" : "green",
+              strokeOpacity: 0.8
+            }}
+          />
+        </GoogleMap>
+      ) : (
+        <Skeleton className="w-[600px] h-[600px] rounded-full" />
+      )}
     </div>
   );
-}
+};
+
+const PlacesAutocomplete = ({
+  onAddressSelect
+}: {
+  onAddressSelect?: (address: string) => void;
+}) => {
+  const {
+    ready,
+    value,
+    suggestions: { status, data },
+    setValue,
+    clearSuggestions
+  } = usePlacesAutocomplete({
+    requestOptions: {
+      componentRestrictions: {
+        country: "in"
+      }
+    },
+    debounce: 300,
+    cache: 86400
+  });
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script",
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY as string,
+    libraries: ["places"]
+  });
+
+  console.log("ReadyAPI", ready, value, status, data);
+
+  const renderSuggestions = () => {
+    return data.map((suggestion) => {
+      const {
+        place_id,
+        structured_formatting: { main_text, secondary_text },
+        description
+      } = suggestion;
+
+      return (
+        <li
+          key={place_id}
+          onClick={() => {
+            setValue(description, false);
+            clearSuggestions();
+            onAddressSelect && onAddressSelect(description);
+          }}
+        >
+          <strong>{main_text}</strong> <small>{secondary_text}</small>
+        </li>
+      );
+    });
+  };
+
+  return (
+    <div className="flex w-full justify-center items-center">
+      <input
+        value={value}
+        className="p-4 w-full m-4 rounded-md border border-gray-300"
+        disabled={!ready}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Search places to find nearest pgs, hostels"
+      />
+
+      {status === "OK" && (
+        <ul className={styles.suggestionWrapper}>{renderSuggestions()}</ul>
+      )}
+    </div>
+  );
+};
+
+export default Home;
+
+const styles = {
+  homeWrapper: "flex justify-center items-center",
+  sidebar: "mr-4 w-fit h-screen bg-gray-800",
+  autocompleteWrapper: "w-full h-full",
+  autocompleteInput: "w-96 mx-auto mt-32 px-4 py-3 border border-yellow-400",
+  suggestionWrapper: "m-0 w-96 overflow-x-hidden list-none mx-auto px-4",
+  suggestion: "p-2 bg-pink-200 rounded-md m-1 cursor-pointer"
+};
